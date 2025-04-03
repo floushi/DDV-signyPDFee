@@ -44,13 +44,15 @@ try {
     console.error("FATAL ERROR instantiating GCS Storage:", gcsError);
     process.exit(1); // Exit if GCS client fails to initialize
 }
-const BUCKET_NAME = process.env.GCS_BUCKET_NAME; // Required env var: Your GCS bucket name
-console.log(`GCS_BUCKET_NAME: ${BUCKET_NAME}`);
+// Corrected environment variable name to match Cloud Run settings
+const BUCKET_NAME = process.env.GCP_BUCKET_NAME; // Required env var: Your GCS bucket name 
+console.log(`GCP_BUCKET_NAME: ${BUCKET_NAME}`); // Log the correct variable name
 const MAKE_PUBLIC = process.env.GCS_MAKE_PUBLIC === 'true'; // Optional: Set to 'true' to make files public
-console.log(`MAKE_PUBLIC: ${MAKE_PUBLIC}`);
+console.log(`GCS_MAKE_PUBLIC: ${MAKE_PUBLIC}`); // This one might be optional or named differently, keeping as is for now
 
 if (!BUCKET_NAME) {
-    console.error("FATAL ERROR: GCS_BUCKET_NAME environment variable is not set.");
+    // Corrected error message
+    console.error("FATAL ERROR: GCP_BUCKET_NAME environment variable is not set."); 
     process.exit(1); // Exit if bucket name is not configured
 }
 // --- End GCS Configuration ---
