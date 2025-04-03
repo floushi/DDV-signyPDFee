@@ -1,73 +1,98 @@
+console.log("[DEBUG] Starting server.js execution..."); // Log start
+
 import express from 'express';
+console.log("[DEBUG] Imported express");
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
+console.log("[DEBUG] Imported pdf-lib");
 import { promises as fs } from 'fs';
+console.log("[DEBUG] Imported fs.promises");
 import path from 'path';
+console.log("[DEBUG] Imported path");
 import { fileURLToPath } from 'url';
+console.log("[DEBUG] Imported url.fileURLToPath");
 import { v4 as uuidv4 } from 'uuid';
+console.log("[DEBUG] Imported uuid");
 import { dataUriToBuffer } from 'data-uri-to-buffer';
+console.log("[DEBUG] Imported data-uri-to-buffer");
 import multer from 'multer';
+console.log("[DEBUG] Imported multer");
 import pdfConfig from './pdfConfig.mjs';
-// import fontkit from '@pdf-lib/fontkit'; // Temporarily commented out for diagnostics
+console.log("[DEBUG] Imported pdfConfig.mjs");
+import fontkit from '@pdf-lib/fontkit'; // Restored
+console.log("[DEBUG] Imported @pdf-lib/fontkit");
 import dotenv from 'dotenv';
+console.log("[DEBUG] Imported dotenv");
 import { Storage } from '@google-cloud/storage'; // Added for GCS
+console.log("[DEBUG] Imported @google-cloud/storage");
 
-// Load environment variables
+
+// --- Global Try/Catch for early errors ---
 try {
-    dotenv.config();
-} catch (dotenvError) {
-    console.error("Error executing dotenv.config():", dotenvError);
-}
+    console.log("[DEBUG] Entering global try block...");
 
-
-// --- Google Cloud Storage Configuration ---
-let storage;
-try {
-    storage = new Storage(); // Assumes authentication is handled by the environment (e.g., Cloud Run Service Account)
-} catch (gcsError) {
-    console.error("FATAL ERROR instantiating GCS Storage:", gcsError);
-    process.exit(1); // Exit if GCS client fails to initialize
-}
-// Corrected environment variable name to match Cloud Run settings
-const BUCKET_NAME = process.env.GCP_BUCKET_NAME; // Required env var: Your GCS bucket name 
-const MAKE_PUBLIC = process.env.GCS_MAKE_PUBLIC === 'true'; // Optional: Set to 'true' to make files public
-
-if (!BUCKET_NAME) {
-    // Corrected error message
-    console.error("FATAL ERROR: GCP_BUCKET_NAME environment variable is not set."); 
-    process.exit(1); // Exit if bucket name is not configured
-}
-// --- End GCS Configuration ---
-
-let PDF_STORE_PATH;
-try {
-    PDF_STORE_PATH = path.join(__dirname, 'pdfStore.json');
-} catch(pathError) {
-     console.error("FATAL ERROR setting PDF_STORE_PATH:", pathError);
-     process.exit(1);
-}
-
-
-// API Key middleware
-const apiKeyAuth = (req, res, next) => {
-    const apiKey = req.headers['x-api-key'];
-    if (!apiKey || apiKey !== process.env.API_KEY) {
-        return res.status(401).json({ error: 'Unauthorized' });
+    // Load environment variables
+    try {
+        dotenv.config();
+        console.log("[DEBUG] dotenv.config() executed");
+    } catch (dotenvError) {
+        console.error("[DEBUG] Error executing dotenv.config():", dotenvError);
     }
-    next();
-};
 
-let __filename, __dirname;
-try {
-    __filename = fileURLToPath(import.meta.url);
-    __dirname = path.dirname(__filename);
-} catch (pathSetupError) {
-    console.error("FATAL ERROR setting up __filename/__dirname:", pathSetupError);
-    process.exit(1);
-}
+    // --- Google Cloud Storage Configuration ---
+    let storage;
+    try {
+        storage = new Storage(); // Assumes authentication is handled by the environment (e.g., Cloud Run Service Account)
+        console.log("[DEBUG] Instantiated GCS Storage");
+    } catch (gcsError) {
+        console.error("[DEBUG] FATAL ERROR instantiating GCS Storage:", gcsError);
+        process.exit(1); // Exit if GCS client fails to initialize
+    }
+    // Corrected environment variable name to match Cloud Run settings
+    const BUCKET_NAME = process.env.GCP_BUCKET_NAME; // Required env var: Your GCS bucket name 
+    console.log(`[DEBUG] GCP_BUCKET_NAME: ${BUCKET_NAME}`); // Log the correct variable name
+    const MAKE_PUBLIC = process.env.GCS_MAKE_PUBLIC === 'true'; // Optional: Set to 'true' to make files public
+    console.log(`[DEBUG] GCS_MAKE_PUBLIC: ${MAKE_PUBLIC}`); // This one might be optional or named differently, keeping as is for now
+
+    if (!BUCKET_NAME) {
+        // Corrected error message
+        console.error("[DEBUG] FATAL ERROR: GCP_BUCKET_NAME environment variable is not set."); 
+        process.exit(1); // Exit if bucket name is not configured
+    }
+    // --- End GCS Configuration ---
+
+    // Define __dirname using import.meta.url (standard for ES Modules)
+    let __dirname;
+    try {
+        __dirname = path.dirname(fileURLToPath(import.meta.url));
+        console.log(`[DEBUG] __dirname set to: ${__dirname}`);
+    } catch (pathSetupError) {
+        console.error("[DEBUG] FATAL ERROR setting up __dirname:", pathSetupError);
+        process.exit(1);
+    }
+
+    let PDF_STORE_PATH;
+    try {
+        PDF_STORE_PATH = path.join(__dirname, 'pdfStore.json');
+        console.log(`[DEBUG] PDF_STORE_PATH set to: ${PDF_STORE_PATH}`);
+    } catch(pathError) {
+         console.error("[DEBUG] FATAL ERROR setting PDF_STORE_PATH:", pathError);
+         process.exit(1);
+    }
 
 
-/**
- * Adds signature and fields to a PDF page
+    // API Key middleware
+    const apiKeyAuth = (req, res, next) => {
+        const apiKey = req.headers['x-api-key'];
+        if (!apiKey || apiKey !== process.env.API_KEY) {
+            return res.status(401).json({ error: 'Unauthorized' });
+        }
+        next();
+    };
+    console.log("[DEBUG] Defined apiKeyAuth middleware");
+
+
+    /**
+     * Adds signature and fields to a PDF page
  * @param {PDFPage} page - The PDF page to add content to
  * @param {Object} signatureConfig - Configuration for signature placement
  * @param {string} signatureData - Base64 encoded signature image data
@@ -125,9 +150,8 @@ async function addSignatureToPage(page, signatureConfig, signatureData, fields, 
                 : path.join(__dirname, 'public', 'fonts', 'BarlowSemiCondensed-Regular.ttf');
             
             const fontBytes = await fs.readFile(fontPath);
-            // Fontkit usage commented out for diagnostics
-            // const keyboardFont = await pdfDoc.embedFont(fontBytes, { subset: true }); 
-            const keyboardFont = helveticaFont; // Fallback to helvetica for now
+            // Restore fontkit usage
+            const keyboardFont = await pdfDoc.embedFont(fontBytes, { subset: true }); 
 
             page.drawText('Unterschrift per Tastatur:', {
                 x: 150,
@@ -174,12 +198,14 @@ async function addSignatureToPage(page, signatureConfig, signatureData, fields, 
         throw new Error(`Fehler beim Einfügen der Unterschrift: ${error.message}`);
     }
 }
+console.log("[DEBUG] Defined addSignatureToPage function");
 
 let app;
 try {
     app = express();
+    console.log("[DEBUG] Initialized express app");
 } catch (expressError) {
-     console.error("FATAL ERROR initializing express app:", expressError);
+     console.error("[DEBUG] FATAL ERROR initializing express app:", expressError);
      process.exit(1);
 }
 
@@ -192,13 +218,17 @@ if (!port) {
     process.exit(1); // Exit if port is not configured (required by Cloud Run)
 }
 // --- End Port Configuration ---
+console.log(`[DEBUG] Port configured: ${port}`);
 
 try {
     app.use(express.json());
+    console.log("[DEBUG] Applied express.json middleware");
     app.use(express.urlencoded({ extended: true }));
+    console.log("[DEBUG] Applied express.urlencoded middleware");
     app.use(express.static('public'));
+    console.log("[DEBUG] Applied express.static middleware for 'public' directory");
 } catch (middlewareError) {
-    console.error("FATAL ERROR applying base middleware:", middlewareError);
+    console.error("[DEBUG] FATAL ERROR applying base middleware:", middlewareError);
     process.exit(1);
 }
 
@@ -208,8 +238,9 @@ let upload;
 try {
     const multerStorage = multer.memoryStorage(); // Store the file in memory
     upload = multer({ storage: multerStorage });
+    console.log("[DEBUG] Configured multer middleware");
 } catch (multerError) {
-    console.error("FATAL ERROR configuring multer:", multerError);
+    console.error("[DEBUG] FATAL ERROR configuring multer:", multerError);
     process.exit(1);
 }
 
@@ -355,7 +386,7 @@ app.post('/api/pdf-config', async (req, res) => {
         const templatePath = path.join(__dirname, 'templates', 'DVV-All-Time-Best-Media.pdf');
         const templateBytes = await fs.readFile(templatePath);
         const pdfDoc = await PDFDocument.load(templateBytes);
-        // pdfDoc.registerFontkit(fontkit); // Temporarily commented out
+        pdfDoc.registerFontkit(fontkit); // Restored
         const pages = pdfDoc.getPages();
         const helveticaFont = await pdfDoc.embedFont(StandardFonts.Helvetica);
 
@@ -489,7 +520,7 @@ app.post('/api/sign', async (req, res) => {
         // Download the original PDF from GCS
         const originalPdfBytes = await downloadPdfFromGcs(pdfData.pdfUrl);
         const pdfDoc = await PDFDocument.load(originalPdfBytes);
-        // pdfDoc.registerFontkit(fontkit); // Temporarily commented out
+        pdfDoc.registerFontkit(fontkit); // Restored
         const pages = pdfDoc.getPages();
         const helveticaFont = await pdfDoc.embedFont(StandardFonts.Helvetica);
 
@@ -624,8 +655,16 @@ server.on('error', (error) => {
 // Load the initial PDF store data asynchronously after initiating the listen process
 loadInitialPdfStore().catch(err => {
     // Log errors during async loading but don't necessarily crash the server
-    console.error("Error during async PDF store loading:", err);
+    console.error("[DEBUG] Error during async PDF store loading:", err);
 });
+
+console.log("[DEBUG] Server setup complete, attempting to listen...");
+
+} catch (globalError) {
+    // --- Catch errors during the main setup phase ---
+    console.error("[DEBUG] FATAL ERROR during initial script setup:", globalError);
+    process.exit(1); // Exit if any setup step fails critically
+}
 
 
 /**
