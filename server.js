@@ -1,23 +1,53 @@
+console.log("Starting server.js execution..."); // Log start
+
 import express from 'express';
+console.log("Imported express");
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
+console.log("Imported pdf-lib");
 import { promises as fs } from 'fs';
+console.log("Imported fs.promises");
 import path from 'path';
+console.log("Imported path");
 import { fileURLToPath } from 'url';
+console.log("Imported url.fileURLToPath");
 import { v4 as uuidv4 } from 'uuid';
+console.log("Imported uuid");
 import { dataUriToBuffer } from 'data-uri-to-buffer';
+console.log("Imported data-uri-to-buffer");
 import multer from 'multer';
+console.log("Imported multer");
 import pdfConfig from './pdfConfig.mjs';
+console.log("Imported pdfConfig.mjs");
 import fontkit from '@pdf-lib/fontkit';
+console.log("Imported @pdf-lib/fontkit");
 import dotenv from 'dotenv';
+console.log("Imported dotenv");
 import { Storage } from '@google-cloud/storage'; // Added for GCS
+console.log("Imported @google-cloud/storage");
 
 // Load environment variables
-dotenv.config();
+try {
+    dotenv.config();
+    console.log("dotenv.config() executed");
+} catch (dotenvError) {
+    console.error("Error executing dotenv.config():", dotenvError);
+    // Decide if this is fatal - usually not unless .env is critical and missing
+}
+
 
 // --- Google Cloud Storage Configuration ---
-const storage = new Storage(); // Assumes authentication is handled by the environment (e.g., Cloud Run Service Account)
+let storage;
+try {
+    storage = new Storage(); // Assumes authentication is handled by the environment (e.g., Cloud Run Service Account)
+    console.log("Instantiated GCS Storage");
+} catch (gcsError) {
+    console.error("FATAL ERROR instantiating GCS Storage:", gcsError);
+    process.exit(1); // Exit if GCS client fails to initialize
+}
 const BUCKET_NAME = process.env.GCS_BUCKET_NAME; // Required env var: Your GCS bucket name
+console.log(`GCS_BUCKET_NAME: ${BUCKET_NAME}`);
 const MAKE_PUBLIC = process.env.GCS_MAKE_PUBLIC === 'true'; // Optional: Set to 'true' to make files public
+console.log(`MAKE_PUBLIC: ${MAKE_PUBLIC}`);
 
 if (!BUCKET_NAME) {
     console.error("FATAL ERROR: GCS_BUCKET_NAME environment variable is not set.");
@@ -25,7 +55,15 @@ if (!BUCKET_NAME) {
 }
 // --- End GCS Configuration ---
 
-const PDF_STORE_PATH = path.join(__dirname, 'pdfStore.json');
+let PDF_STORE_PATH;
+try {
+    PDF_STORE_PATH = path.join(__dirname, 'pdfStore.json');
+    console.log(`PDF_STORE_PATH set to: ${PDF_STORE_PATH}`);
+} catch(pathError) {
+     console.error("FATAL ERROR setting PDF_STORE_PATH:", pathError);
+     process.exit(1);
+}
+
 
 // API Key middleware
 const apiKeyAuth = (req, res, next) => {
@@ -35,9 +73,19 @@ const apiKeyAuth = (req, res, next) => {
     }
     next();
 };
+console.log("Defined apiKeyAuth middleware");
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+let __filename, __dirname;
+try {
+    __filename = fileURLToPath(import.meta.url);
+    __dirname = path.dirname(__filename);
+    console.log(`__filename: ${__filename}`);
+    console.log(`__dirname: ${__dirname}`);
+} catch (pathSetupError) {
+    console.error("FATAL ERROR setting up __filename/__dirname:", pathSetupError);
+    process.exit(1);
+}
+
 
 /**
  * Adds signature and fields to a PDF page
@@ -145,8 +193,17 @@ async function addSignatureToPage(page, signatureConfig, signatureData, fields, 
         throw new Error(`Fehler beim Einfügen der Unterschrift: ${error.message}`);
     }
 }
+console.log("Defined addSignatureToPage function");
 
-const app = express();
+let app;
+try {
+    app = express();
+    console.log("Initialized express app");
+} catch (expressError) {
+     console.error("FATAL ERROR initializing express app:", expressError);
+     process.exit(1);
+}
+
 // --- Port Configuration ---
 // Cloud Run provides the port to listen on via the PORT environment variable.
 // Fallback removed to ensure strict adherence to the Cloud Run environment.
@@ -156,14 +213,32 @@ if (!port) {
     process.exit(1); // Exit if port is not configured (required by Cloud Run)
 }
 // --- End Port Configuration ---
+console.log(`Port configured: ${port}`);
 
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
-app.use(express.static('public'));
+try {
+    app.use(express.json());
+    console.log("Applied express.json middleware");
+    app.use(express.urlencoded({ extended: true }));
+    console.log("Applied express.urlencoded middleware");
+    app.use(express.static('public'));
+    console.log("Applied express.static middleware for 'public' directory");
+} catch (middlewareError) {
+    console.error("FATAL ERROR applying base middleware:", middlewareError);
+    process.exit(1);
+}
+
 
 // Multer configuration for file uploads
-const multerStorage = multer.memoryStorage(); // Store the file in memory
-const upload = multer({ storage: multerStorage });
+let upload;
+try {
+    const multerStorage = multer.memoryStorage(); // Store the file in memory
+    upload = multer({ storage: multerStorage });
+    console.log("Configured multer middleware");
+} catch (multerError) {
+    console.error("FATAL ERROR configuring multer:", multerError);
+    process.exit(1);
+}
+
 
 app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
@@ -195,22 +270,32 @@ app.get('/template', async (req, res) => {
 // Fixed webhook URL
 const WEBHOOK_URL = 'https://hook.eu2.make.com/shqssx7au2d7m7fu4hz86qiojoh65k40';
 
-// Load PDF data from JSON file
+// Initialize pdfStore globally - it will be populated asynchronously after server start
 let pdfStore = {};
-try {
-    const data = await fs.readFile(PDF_STORE_PATH, 'utf8');
-    pdfStore = JSON.parse(data);
-    console.log('PDF store loaded successfully.');
-} catch (error) {
-    if (error.code === 'ENOENT') {
-        console.log('pdfStore.json not found, starting with an empty store.');
-        await fs.writeFile(PDF_STORE_PATH, JSON.stringify({}), 'utf8'); // Create the file if it doesn't exist
-    } else {
-        console.error('Error loading PDF store:', error);
-        // Decide how to handle errors, e.g., exit or start with empty store
-        process.exit(1); // Exit if we can't load the store and it's not a 'not found' error
+
+// Async function to load the initial PDF store data
+async function loadInitialPdfStore() {
+    try {
+        const data = await fs.readFile(PDF_STORE_PATH, 'utf8');
+        pdfStore = JSON.parse(data); // Update the global pdfStore object
+        console.log('PDF store loaded successfully.');
+    } catch (error) {
+        if (error.code === 'ENOENT') {
+            console.log('pdfStore.json not found, starting with an empty store.');
+            // Attempt to create the file, but don't block startup if it fails
+            try {
+                await fs.writeFile(PDF_STORE_PATH, JSON.stringify({}), 'utf8'); 
+            } catch (writeError) {
+                 console.error('Error creating initial pdfStore.json:', writeError);
+            }
+        } else {
+            // Log critical error, but allow server to continue running
+            console.error('CRITICAL: Error loading PDF store on startup:', error);
+            // Consider adding monitoring/alerting here
+        }
     }
 }
+
 
 // Function to save the PDF store to the JSON file
 async function savePdfStore() {
@@ -534,9 +619,38 @@ app.post('/api/sign', async (req, res) => {
     }
 });
 
-app.listen(port, () => {
-    console.log(`Server läuft auf Port ${port}`);
+// Start the server listening on the specified port and host
+const server = app.listen(port, '0.0.0.0', () => {
+    // This callback confirms the server *attempted* to listen.
+    console.log(`Server attempting to listen on host 0.0.0.0, port ${port}`);
     console.log(`Aktuelles Verzeichnis: ${__dirname}`);
+});
+
+// Handle potential server errors (e.g., port already in use)
+server.on('error', (error) => {
+    console.error('FATAL SERVER ERROR:', error);
+    if (error.syscall !== 'listen') {
+        throw error;
+    }
+    // Specific listen errors
+    switch (error.code) {
+        case 'EACCES':
+            console.error(`Port ${port} requires elevated privileges`);
+            process.exit(1);
+            break;
+        case 'EADDRINUSE':
+            console.error(`Port ${port} is already in use`);
+            process.exit(1);
+            break;
+        default:
+            throw error;
+    }
+});
+
+// Load the initial PDF store data asynchronously after initiating the listen process
+loadInitialPdfStore().catch(err => {
+    // Log errors during async loading but don't necessarily crash the server
+    console.error("Error during async PDF store loading:", err);
 });
 
 
