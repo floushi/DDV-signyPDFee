@@ -16,12 +16,9 @@ RUN npm install
 # Copy all files from the current directory to the working directory in the container
 COPY . .
 
-# Make port 3000 available to the world outside this container
-EXPOSE 3000
-
-# Define environment variable for the port
-# Allows overriding the default port 3000
-ENV PORT=3000
+# Cloud Run injects the PORT environment variable automatically.
+# EXPOSE is not needed as Cloud Run handles port mapping.
+# ENV PORT is not needed as Cloud Run provides the value at runtime.
 
 # Run the app when the container launches
 CMD [ "npm", "start" ]
