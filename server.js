@@ -9,9 +9,21 @@ import multer from 'multer';
 import pdfConfig from './pdfConfig.mjs';
 import fontkit from '@pdf-lib/fontkit';
 import dotenv from 'dotenv';
+import { Storage } from '@google-cloud/storage'; // Added for GCS
 
 // Load environment variables
 dotenv.config();
+
+// --- Google Cloud Storage Configuration ---
+const storage = new Storage(); // Assumes authentication is handled by the environment (e.g., Cloud Run Service Account)
+const BUCKET_NAME = process.env.GCS_BUCKET_NAME; // Required env var: Your GCS bucket name
+const MAKE_PUBLIC = process.env.GCS_MAKE_PUBLIC === 'true'; // Optional: Set to 'true' to make files public
+
+if (!BUCKET_NAME) {
+    console.error("FATAL ERROR: GCS_BUCKET_NAME environment variable is not set.");
+    process.exit(1); // Exit if bucket name is not configured
+}
+// --- End GCS Configuration ---
 
 const PDF_STORE_PATH = path.join(__dirname, 'pdfStore.json');
 
@@ -215,10 +227,12 @@ app.post('/api/pdf-upload', apiKeyAuth, upload.single('pdf'), async (req, res) =
         }
 
         const pdfId = uuidv4();
-        const filename = 'uploaded_' + pdfId + '.pdf';
-        await uploadPdfToCloudBucket(pdfBytes, filename);
+        // Define a destination path within the bucket (e.g., in an 'uploads' folder)
+        const destinationFilename = `uploads/uploaded_${pdfId}.pdf`; 
 
-        const pdfUrl = await getCloudBucketUrl(filename);
+        // Upload to GCS using the new function
+        const pdfUrl = await storePdfInBucket(pdfBytes, destinationFilename); 
+
         const signUrl = `/sign/${pdfId}`;
 
         // Parse die webhookUrl aus den formData-Feldern
@@ -230,9 +244,9 @@ app.post('/api/pdf-upload', apiKeyAuth, upload.single('pdf'), async (req, res) =
         const card_id = webhookUrl.searchParams.get('card_id');
         const email = webhookUrl.searchParams.get('email');
 
+        // Store the GCS URL/URI and other relevant data. No need for local filename.
         pdfStore[pdfId] = {
-            filename,
-            pdfUrl,
+            pdfUrl, // This now holds the GCS URL/URI
             signUrl,
             webhookUrl: WEBHOOK_URL,
             vorname: vorname || null,
@@ -322,11 +336,13 @@ app.post('/api/pdf-config', async (req, res) => {
         }
 
         const pdfBytes = await pdfDoc.save();
-        const filename = 'ausbildungsvertrag_' + uuidv4() + '.pdf';
-        await uploadPdfToCloudBucket(pdfBytes, filename);
+        // Define a destination path within the bucket (e.g., in a 'contracts' folder)
+        const destinationFilename = `contracts/ausbildungsvertrag_${uuidv4()}.pdf`; 
 
-        const pdfUrl = await getCloudBucketUrl(filename);
-        res.json({ pdfUrl });
+        // Upload to GCS using the new function
+        const pdfUrl = await storePdfInBucket(pdfBytes, destinationFilename); 
+        
+        res.json({ pdfUrl }); // Return the GCS URL/URI
 
         // Send webhook notification
         try {
@@ -356,31 +372,8 @@ app.post('/api/pdf-config', async (req, res) => {
     }
 });
 
-// Get PDF by ID
-app.get('/api/pdf/:pdfId', async (req, res) => {
-    try {
-        const pdfId = req.params.pdfId;
-        const pdfData = pdfStore[pdfId]; // Read from the loaded store object
-
-        if (!pdfData) {
-            return res.status(404).json({ error: 'PDF nicht gefunden' });
-        }
-
-        const pdfPath = path.join(__dirname, 'public', pdfData.filename);
-        try {
-            const pdfBytes = await fs.readFile(pdfPath);
-            res.contentType('application/pdf');
-            res.send(pdfBytes);
-        } catch (error) {
-            return res.status(404).json({ error: 'PDF nicht gefunden' });
-        }
-    } catch (error) {
-        console.error('Error serving PDF:', error);
-        res.status(500).json({ error: error.message });
-    }
-});
-
 // Handle PDF signing
+// Note: The '/api/pdf/:pdfId' GET route has been removed as PDFs are now served directly from GCS URLs/URIs
 app.post('/api/sign', async (req, res) => {
     try {
         const {
@@ -419,13 +412,16 @@ app.post('/api/sign', async (req, res) => {
 
         const pdfData = pdfStore[pdfId]; // Read from the loaded store object
         if (!pdfData) {
-            return res.status(404).json({ error: 'PDF nicht gefunden' });
+            return res.status(404).json({ error: 'PDF nicht gefunden oder ungültige ID.' });
+        }
+        if (!pdfData.pdfUrl) {
+             console.error(`PDF data for ID ${pdfId} is missing the pdfUrl property.`);
+             return res.status(500).json({ error: 'Interner Serverfehler: PDF-Speicherort nicht gefunden.' });
         }
 
-        // Load the PDF from local storage
-        const pdfPath = path.join(__dirname, 'public', pdfData.filename);
-        const pdfBytes = await fs.readFile(pdfPath);
-        const pdfDoc = await PDFDocument.load(pdfBytes);
+        // Download the original PDF from GCS
+        const originalPdfBytes = await downloadPdfFromGcs(pdfData.pdfUrl);
+        const pdfDoc = await PDFDocument.load(originalPdfBytes);
         pdfDoc.registerFontkit(fontkit);
         const pages = pdfDoc.getPages();
         const helveticaFont = await pdfDoc.embedFont(StandardFonts.Helvetica);
@@ -482,14 +478,20 @@ app.post('/api/sign', async (req, res) => {
             }
         }
 
-        // Save the signed PDF
+        // Save the signed PDF bytes
         const signedPdfBytes = await pdfDoc.save();
-        const signedFilename = 'signed_' + pdfId + '.pdf';
-        await uploadPdfToCloudBucket(signedPdfBytes, signedFilename);
+        
+        // Define destination for the signed PDF in GCS (e.g., in a 'signed' folder)
+        const signedDestinationFilename = `signed/signed_${pdfId}.pdf`;
 
-        const signedPdfUrl = await getCloudBucketUrl(signedFilename);
+        // Upload the signed PDF to GCS
+        const signedPdfUrl = await storePdfInBucket(signedPdfBytes, signedDestinationFilename);
 
-        // Send webhook notification with stored data
+        // Optionally: Update pdfStore with the signed URL? 
+        // pdfStore[pdfId].signedPdfUrl = signedPdfUrl; 
+        // await savePdfStore(); // Consider if needed
+
+        // Send webhook notification with stored data and the new signed GCS URL
         try {
             const fetch = (await import('node-fetch')).default;
             await fetch(WEBHOOK_URL, {
@@ -529,14 +531,91 @@ app.listen(port, () => {
     console.log(`Aktuelles Verzeichnis: ${__dirname}`);
 });
 
-async function uploadPdfToCloudBucket(pdfBytes, filename) {
-    // Temporarily save to public folder for testing
-    const pdfPath = path.join(__dirname, 'public', filename);
-    await fs.writeFile(pdfPath, pdfBytes);
-    console.log(`PDF-Datei gespeichert unter: ${pdfPath}`);
+
+/**
+ * Downloads PDF content from a GCS URL/URI.
+ * @param {string} gcsPathOrUrl - The GCS URI (gs://...) or public URL (https://...).
+ * @returns {Promise<Buffer>} - The PDF content as a Buffer.
+ */
+async function downloadPdfFromGcs(gcsPathOrUrl) {
+    try {
+        let bucketName, filePath;
+        // Extract bucket and file path from gs:// URI or https:// URL
+        if (gcsPathOrUrl.startsWith('gs://')) {
+            const match = gcsPathOrUrl.match(/^gs:\/\/([^\/]+)\/(.+)$/);
+            if (!match) throw new Error(`Invalid GCS URI format: ${gcsPathOrUrl}`);
+            bucketName = match[1];
+            filePath = match[2];
+        } else if (gcsPathOrUrl.startsWith('https://storage.googleapis.com/')) {
+            const match = gcsPathOrUrl.match(/^https:\/\/storage\.googleapis\.com\/([^\/]+)\/(.+)$/);
+            if (!match) throw new Error(`Invalid GCS public URL format: ${gcsPathOrUrl}`);
+            bucketName = match[1];
+            filePath = match[2];
+            // Security check: Ensure the bucket matches the configured one if downloading via public URL
+            if (bucketName !== BUCKET_NAME) {
+                 console.warn(`Attempted download from unexpected bucket via public URL: ${bucketName}`);
+                 throw new Error(`Invalid bucket in public URL.`);
+            }
+        } else {
+            throw new Error(`Unsupported PDF URL format for download: ${gcsPathOrUrl}`);
+        }
+
+        // Check if the bucket we are downloading from is the configured one
+        if (bucketName !== BUCKET_NAME) {
+             console.warn(`Attempted download from unexpected bucket: ${bucketName}`);
+             throw new Error(`Cannot download from bucket ${bucketName}, expected ${BUCKET_NAME}.`);
+        }
+
+        const [contents] = await storage.bucket(bucketName).file(filePath).download();
+        console.log(`Downloaded PDF from gs://${bucketName}/${filePath}`);
+        return contents; // contents is a Buffer
+    } catch (error) {
+        console.error(`ERROR downloading PDF from GCS "${gcsPathOrUrl}":`, error);
+        // Improve error message based on common GCS errors
+        if (error.code === 404 || error.message.includes('Not Found')) {
+             throw new Error(`PDF not found at GCS location: ${gcsPathOrUrl}.`);
+        } else if (error.code === 403 || error.message.includes('does not have storage.objects.get access')) {
+             throw new Error(`Permission denied to download PDF from GCS: ${gcsPathOrUrl}. Check Cloud Run service account permissions.`);
+        }
+        throw new Error(`Failed to download PDF from GCS: ${gcsPathOrUrl}.`);
+    }
 }
 
-async function getCloudBucketUrl(filename) {
-    // Temporarily return local URL for testing
-    return `/${filename}`;
+
+/**
+ * Uploads PDF bytes to Google Cloud Storage.
+ * @param {Buffer} pdfBytes - The PDF content as a Buffer.
+ * @param {string} destinationFilename - The desired filename in the GCS bucket (e.g., 'pdfs/document.pdf').
+ * @returns {Promise<string>} - The GCS URI (gs://...) or public URL (https://...) of the uploaded file.
+ */
+async function storePdfInBucket(pdfBytes, destinationFilename) {
+    const file = storage.bucket(BUCKET_NAME).file(destinationFilename);
+
+    try {
+        await file.save(pdfBytes, {
+            metadata: {
+                contentType: 'application/pdf',
+                // Add any other metadata here if needed
+            },
+            // Optionally set predefined ACL if making public immediately
+            // predefinedAcl: MAKE_PUBLIC ? 'publicRead' : undefined, // Alternative to calling makePublic() later
+        });
+        console.log(`PDF uploaded to gs://${BUCKET_NAME}/${destinationFilename}`);
+
+        if (MAKE_PUBLIC) {
+            // Make the file public if configured
+            await file.makePublic();
+            const publicUrl = `https://storage.googleapis.com/${BUCKET_NAME}/${destinationFilename}`;
+            console.log(`PDF made public at: ${publicUrl}`);
+            return publicUrl;
+        } else {
+            // Return the GCS URI for private files
+            const gcsUri = `gs://${BUCKET_NAME}/${destinationFilename}`;
+            return gcsUri;
+        }
+    } catch (error) {
+        console.error(`ERROR uploading PDF to GCS bucket "${BUCKET_NAME}":`, error);
+        // Re-throw the error to be handled by the calling route
+        throw new Error(`Failed to upload PDF to bucket ${BUCKET_NAME}.`);
+    }
 }
