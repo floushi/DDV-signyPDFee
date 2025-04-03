@@ -13,6 +13,8 @@ import dotenv from 'dotenv';
 // Load environment variables
 dotenv.config();
 
+const PDF_STORE_PATH = path.join(__dirname, 'pdfStore.json');
+
 // API Key middleware
 const apiKeyAuth = (req, res, next) => {
     const apiKey = req.headers['x-api-key'];
@@ -173,8 +175,31 @@ app.get('/template', async (req, res) => {
 // Fixed webhook URL
 const WEBHOOK_URL = 'https://hook.eu2.make.com/shqssx7au2d7m7fu4hz86qiojoh65k40';
 
-// Store PDF data in memory (in production, use a database)
-const pdfStore = new Map();
+// Load PDF data from JSON file
+let pdfStore = {};
+try {
+    const data = await fs.readFile(PDF_STORE_PATH, 'utf8');
+    pdfStore = JSON.parse(data);
+    console.log('PDF store loaded successfully.');
+} catch (error) {
+    if (error.code === 'ENOENT') {
+        console.log('pdfStore.json not found, starting with an empty store.');
+        await fs.writeFile(PDF_STORE_PATH, JSON.stringify({}), 'utf8'); // Create the file if it doesn't exist
+    } else {
+        console.error('Error loading PDF store:', error);
+        // Decide how to handle errors, e.g., exit or start with empty store
+        process.exit(1); // Exit if we can't load the store and it's not a 'not found' error
+    }
+}
+
+// Function to save the PDF store to the JSON file
+async function savePdfStore() {
+    try {
+        await fs.writeFile(PDF_STORE_PATH, JSON.stringify(pdfStore, null, 2), 'utf8');
+    } catch (error) {
+        console.error('Error saving PDF store:', error);
+    }
+}
 
 app.post('/api/pdf-upload', apiKeyAuth, upload.single('pdf'), async (req, res) => {
     try {
@@ -204,16 +229,18 @@ app.post('/api/pdf-upload', apiKeyAuth, upload.single('pdf'), async (req, res) =
         const vorname = webhookUrl.searchParams.get('vorname');
         const card_id = webhookUrl.searchParams.get('card_id');
         const email = webhookUrl.searchParams.get('email');
-        
-        pdfStore.set(pdfId, {
+
+        pdfStore[pdfId] = {
             filename,
             pdfUrl,
             signUrl,
             webhookUrl: WEBHOOK_URL,
             vorname: vorname || null,
             card_id: card_id || null,
-            email: email || null 
-        });
+            email: email || null
+        };
+
+        await savePdfStore(); // Save updated store to file
 
         res.json({ pdfUrl, signUrl });
 
@@ -333,8 +360,8 @@ app.post('/api/pdf-config', async (req, res) => {
 app.get('/api/pdf/:pdfId', async (req, res) => {
     try {
         const pdfId = req.params.pdfId;
-        const pdfData = pdfStore.get(pdfId);
-        
+        const pdfData = pdfStore[pdfId]; // Read from the loaded store object
+
         if (!pdfData) {
             return res.status(404).json({ error: 'PDF nicht gefunden' });
         }
@@ -390,7 +417,7 @@ app.post('/api/sign', async (req, res) => {
             });
         }
 
-        const pdfData = pdfStore.get(pdfId);
+        const pdfData = pdfStore[pdfId]; // Read from the loaded store object
         if (!pdfData) {
             return res.status(404).json({ error: 'PDF nicht gefunden' });
         }
