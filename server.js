@@ -147,6 +147,15 @@ async function addSignatureToPage(page, signatureConfig, signatureData, fields, 
 }
 
 const app = express();
+// --- Port Configuration ---
+// Cloud Run provides the port to listen on via the PORT environment variable.
+// Fallback removed to ensure strict adherence to the Cloud Run environment.
+const port = process.env.PORT; 
+if (!port) {
+    console.error("FATAL ERROR: PORT environment variable is not set.");
+    process.exit(1); // Exit if port is not configured (required by Cloud Run)
+}
+// --- End Port Configuration ---
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
