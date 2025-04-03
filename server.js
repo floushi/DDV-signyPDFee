@@ -1,37 +1,21 @@
-console.log("Starting server.js execution..."); // Log start
-
 import express from 'express';
-console.log("Imported express");
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
-console.log("Imported pdf-lib");
 import { promises as fs } from 'fs';
-console.log("Imported fs.promises");
 import path from 'path';
-console.log("Imported path");
 import { fileURLToPath } from 'url';
-console.log("Imported url.fileURLToPath");
 import { v4 as uuidv4 } from 'uuid';
-console.log("Imported uuid");
 import { dataUriToBuffer } from 'data-uri-to-buffer';
-console.log("Imported data-uri-to-buffer");
 import multer from 'multer';
-console.log("Imported multer");
 import pdfConfig from './pdfConfig.mjs';
-console.log("Imported pdfConfig.mjs");
-import fontkit from '@pdf-lib/fontkit';
-console.log("Imported @pdf-lib/fontkit");
+// import fontkit from '@pdf-lib/fontkit'; // Temporarily commented out for diagnostics
 import dotenv from 'dotenv';
-console.log("Imported dotenv");
 import { Storage } from '@google-cloud/storage'; // Added for GCS
-console.log("Imported @google-cloud/storage");
 
 // Load environment variables
 try {
     dotenv.config();
-    console.log("dotenv.config() executed");
 } catch (dotenvError) {
     console.error("Error executing dotenv.config():", dotenvError);
-    // Decide if this is fatal - usually not unless .env is critical and missing
 }
 
 
@@ -39,16 +23,13 @@ try {
 let storage;
 try {
     storage = new Storage(); // Assumes authentication is handled by the environment (e.g., Cloud Run Service Account)
-    console.log("Instantiated GCS Storage");
 } catch (gcsError) {
     console.error("FATAL ERROR instantiating GCS Storage:", gcsError);
     process.exit(1); // Exit if GCS client fails to initialize
 }
 // Corrected environment variable name to match Cloud Run settings
 const BUCKET_NAME = process.env.GCP_BUCKET_NAME; // Required env var: Your GCS bucket name 
-console.log(`GCP_BUCKET_NAME: ${BUCKET_NAME}`); // Log the correct variable name
 const MAKE_PUBLIC = process.env.GCS_MAKE_PUBLIC === 'true'; // Optional: Set to 'true' to make files public
-console.log(`GCS_MAKE_PUBLIC: ${MAKE_PUBLIC}`); // This one might be optional or named differently, keeping as is for now
 
 if (!BUCKET_NAME) {
     // Corrected error message
@@ -60,7 +41,6 @@ if (!BUCKET_NAME) {
 let PDF_STORE_PATH;
 try {
     PDF_STORE_PATH = path.join(__dirname, 'pdfStore.json');
-    console.log(`PDF_STORE_PATH set to: ${PDF_STORE_PATH}`);
 } catch(pathError) {
      console.error("FATAL ERROR setting PDF_STORE_PATH:", pathError);
      process.exit(1);
@@ -75,14 +55,11 @@ const apiKeyAuth = (req, res, next) => {
     }
     next();
 };
-console.log("Defined apiKeyAuth middleware");
 
 let __filename, __dirname;
 try {
     __filename = fileURLToPath(import.meta.url);
     __dirname = path.dirname(__filename);
-    console.log(`__filename: ${__filename}`);
-    console.log(`__dirname: ${__dirname}`);
 } catch (pathSetupError) {
     console.error("FATAL ERROR setting up __filename/__dirname:", pathSetupError);
     process.exit(1);
@@ -148,7 +125,9 @@ async function addSignatureToPage(page, signatureConfig, signatureData, fields, 
                 : path.join(__dirname, 'public', 'fonts', 'BarlowSemiCondensed-Regular.ttf');
             
             const fontBytes = await fs.readFile(fontPath);
-            const keyboardFont = await pdfDoc.embedFont(fontBytes, { subset: true });
+            // Fontkit usage commented out for diagnostics
+            // const keyboardFont = await pdfDoc.embedFont(fontBytes, { subset: true }); 
+            const keyboardFont = helveticaFont; // Fallback to helvetica for now
 
             page.drawText('Unterschrift per Tastatur:', {
                 x: 150,
@@ -195,12 +174,10 @@ async function addSignatureToPage(page, signatureConfig, signatureData, fields, 
         throw new Error(`Fehler beim Einfügen der Unterschrift: ${error.message}`);
     }
 }
-console.log("Defined addSignatureToPage function");
 
 let app;
 try {
     app = express();
-    console.log("Initialized express app");
 } catch (expressError) {
      console.error("FATAL ERROR initializing express app:", expressError);
      process.exit(1);
@@ -215,15 +192,11 @@ if (!port) {
     process.exit(1); // Exit if port is not configured (required by Cloud Run)
 }
 // --- End Port Configuration ---
-console.log(`Port configured: ${port}`);
 
 try {
     app.use(express.json());
-    console.log("Applied express.json middleware");
     app.use(express.urlencoded({ extended: true }));
-    console.log("Applied express.urlencoded middleware");
     app.use(express.static('public'));
-    console.log("Applied express.static middleware for 'public' directory");
 } catch (middlewareError) {
     console.error("FATAL ERROR applying base middleware:", middlewareError);
     process.exit(1);
@@ -235,7 +208,6 @@ let upload;
 try {
     const multerStorage = multer.memoryStorage(); // Store the file in memory
     upload = multer({ storage: multerStorage });
-    console.log("Configured multer middleware");
 } catch (multerError) {
     console.error("FATAL ERROR configuring multer:", multerError);
     process.exit(1);
@@ -383,7 +355,7 @@ app.post('/api/pdf-config', async (req, res) => {
         const templatePath = path.join(__dirname, 'templates', 'DVV-All-Time-Best-Media.pdf');
         const templateBytes = await fs.readFile(templatePath);
         const pdfDoc = await PDFDocument.load(templateBytes);
-        pdfDoc.registerFontkit(fontkit);
+        // pdfDoc.registerFontkit(fontkit); // Temporarily commented out
         const pages = pdfDoc.getPages();
         const helveticaFont = await pdfDoc.embedFont(StandardFonts.Helvetica);
 
@@ -517,7 +489,7 @@ app.post('/api/sign', async (req, res) => {
         // Download the original PDF from GCS
         const originalPdfBytes = await downloadPdfFromGcs(pdfData.pdfUrl);
         const pdfDoc = await PDFDocument.load(originalPdfBytes);
-        pdfDoc.registerFontkit(fontkit);
+        // pdfDoc.registerFontkit(fontkit); // Temporarily commented out
         const pages = pdfDoc.getPages();
         const helveticaFont = await pdfDoc.embedFont(StandardFonts.Helvetica);
 
