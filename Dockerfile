@@ -1,6 +1,5 @@
-# Use an official Node.js runtime as a parent image
-# Using alpine variant for smaller size
-FROM node:18-alpine
+# Use the standard Node.js 18 runtime as a parent image (Debian-based, includes more common libraries than Alpine)
+FROM node:18
 
 # Set the working directory in the container
 WORKDIR /usr/src/app
