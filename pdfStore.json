@@ -1,1 +1,13 @@
-{}
+const { Storage } = require('@google-cloud/storage');
+const storage = new Storage();
+const bucketName = 'all-time-best-media';
+
+async function storePdf(filePath, destination) {
+  await storage.bucket(bucketName).upload(filePath, {
+    destination,
+    predefinedAcl: 'publicRead', // Datei öffentlich verfügbar machen (falls gewünscht)
+  });
+
+  const publicUrl = `https://storage.googleapis.com/${bucketName}/${destination}`;
+  return publicUrl;  // Diesen Link in der App speichern und per Mail versenden
+}
