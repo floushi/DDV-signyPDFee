@@ -8,8 +8,9 @@ WORKDIR /usr/src/app
 COPY package*.json ./
 
 # Install app dependencies
-# Use --only=production if you don't need devDependencies
-RUN npm install
+# Clean npm cache and perform a clean install using package-lock.json
+# Use --only=production to avoid installing devDependencies
+RUN npm cache clean --force && npm ci --only=production
 
 # Bundle app source
 # Copy all files from the current directory to the working directory in the container
