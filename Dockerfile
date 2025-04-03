@@ -20,4 +20,5 @@ COPY . .
 # ENV PORT is not needed as Cloud Run provides the value at runtime.
 
 # Run the app when the container launches
-CMD [ "npm", "start" ]
+# Execute node directly instead of via npm start
+CMD [ "node", "server.js" ]
