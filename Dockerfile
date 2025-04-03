@@ -20,6 +20,6 @@ COPY . .
 # EXPOSE is not needed as Cloud Run handles port mapping.
 # ENV PORT is not needed as Cloud Run provides the value at runtime.
 
-# Run the app when the container launches
-# Execute node directly instead of via npm start
-CMD [ "node", "server.js" ]
+# Run a simple command to check if Node.js runtime is working
+# This replaces the server start command for diagnostics
+CMD [ "node", "--version" ]
